@@ -1,0 +1,625 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DeepFilter ANC — Real-Time Noise Cancellation</title>
+  <meta name="description" content="Real-time active noise cancellation dashboard powered by DeepFilterNet3" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.min.js"></script>
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --bg-primary: #06060f;
+      --bg-card: rgba(15, 15, 35, 0.7);
+      --border-subtle: rgba(255, 255, 255, 0.06);
+      --border-glow: rgba(0, 212, 255, 0.15);
+      --text-primary: #e8eaf0;
+      --text-secondary: #8b8fa3;
+      --text-muted: #555770;
+      --accent-cyan: #00d4ff;
+      --accent-purple: #7c3aed;
+      --accent-green: #22c55e;
+      --accent-amber: #f59e0b;
+      --glow-cyan: 0 0 30px rgba(0, 212, 255, 0.2);
+      --glow-green: 0 0 20px rgba(34, 197, 94, 0.25);
+      --glow-amber: 0 0 20px rgba(245, 158, 11, 0.25);
+      --radius: 16px;
+      --radius-sm: 10px;
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    .bg-effects { position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; }
+    .bg-orb { position: absolute; border-radius: 50%; filter: blur(100px); opacity: 0.3; animation: orbFloat 20s ease-in-out infinite; }
+    .bg-orb--cyan { width:500px;height:500px;background:radial-gradient(circle,rgba(0,212,255,.25),transparent 70%);top:-10%;left:-5%; }
+    .bg-orb--purple { width:600px;height:600px;background:radial-gradient(circle,rgba(124,58,237,.2),transparent 70%);bottom:-15%;right:-10%;animation-delay:-7s; }
+    .bg-orb--green { width:300px;height:300px;background:radial-gradient(circle,rgba(34,197,94,.15),transparent 70%);top:50%;left:50%;transform:translate(-50%,-50%);animation-delay:-12s; }
+    @keyframes orbFloat {
+      0%,100%{transform:translate(0,0) scale(1)}25%{transform:translate(30px,-40px) scale(1.1)}
+      50%{transform:translate(-20px,20px) scale(.95)}75%{transform:translate(40px,30px) scale(1.05)}
+    }
+    .bg-effects::after { content:'';position:absolute;inset:0;background-image:radial-gradient(rgba(255,255,255,.03) 1px,transparent 1px);background-size:40px 40px; }
+
+    .app { position:relative;z-index:1;max-width:1200px;margin:0 auto;padding:32px 24px; }
+
+    /* Header */
+    .header { text-align:center;margin-bottom:40px; }
+    .header__badge {
+      display:inline-flex;align-items:center;gap:8px;padding:6px 16px;border-radius:100px;
+      background:rgba(0,212,255,.08);border:1px solid rgba(0,212,255,.2);
+      font-size:12px;font-weight:600;color:var(--accent-cyan);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:16px;
+    }
+    .header__badge .dot { width:6px;height:6px;border-radius:50%;background:var(--accent-cyan);animation:pulse 2s ease-in-out infinite; }
+    .header__badge.active .dot { background:var(--accent-green);box-shadow:var(--glow-green); }
+    .header__badge.active { color:var(--accent-green);border-color:rgba(34,197,94,.3);background:rgba(34,197,94,.08); }
+    @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(.8)} }
+
+    .header__title {
+      font-size:40px;font-weight:800;letter-spacing:-1.5px;line-height:1.2;
+      background:linear-gradient(135deg,#e8eaf0,#00d4ff,#7c3aed);background-size:200% auto;
+      -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
+      animation:shimmer 5s linear infinite;
+    }
+    @keyframes shimmer { 0%{background-position:0% center}100%{background-position:200% center} }
+    .header__subtitle { font-size:15px;color:var(--text-secondary);margin-top:8px; }
+
+    /* Cards */
+    .card {
+      background:var(--bg-card);border:1px solid var(--border-subtle);border-radius:var(--radius);
+      backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);transition:border-color .3s,box-shadow .3s;
+    }
+    .card:hover { border-color:var(--border-glow);box-shadow:var(--glow-cyan); }
+    .card__header { display:flex;align-items:center;justify-content:space-between;padding:20px 24px 0; }
+    .card__title { font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:1.2px;color:var(--text-secondary); }
+    .card__body { padding:20px 24px 24px; }
+
+    /* Controls */
+    .controls { display:flex;align-items:center;justify-content:center;gap:40px;margin-bottom:32px; }
+    .control-group { display:flex;flex-direction:column;align-items:center; }
+
+    .btn-circle {
+      position:relative;width:72px;height:72px;border-radius:50%;border:2px solid var(--border-subtle);
+      background:var(--bg-card);cursor:pointer;display:flex;align-items:center;justify-content:center;
+      transition:all .4s cubic-bezier(.4,0,.2,1);backdrop-filter:blur(12px);
+    }
+    .btn-circle svg { width:28px;height:28px;stroke:var(--text-secondary);transition:stroke .3s;fill:none; }
+    .btn-circle::after { content:'';position:absolute;inset:-4px;border-radius:50%;border:2px solid transparent;transition:border-color .3s; }
+
+    .btn-circle.power:hover { border-color:var(--accent-cyan);box-shadow:var(--glow-cyan); }
+    .btn-circle.power:hover svg { stroke:var(--accent-cyan); }
+    .btn-circle.power.active { border-color:var(--accent-green);background:rgba(34,197,94,.1);box-shadow:var(--glow-green); }
+    .btn-circle.power.active svg { stroke:var(--accent-green); }
+    .btn-circle.power.active::after { border-color:rgba(34,197,94,.2);animation:ringPulse 2s ease-in-out infinite; }
+
+    .btn-circle.listen:hover { border-color:var(--accent-amber);box-shadow:var(--glow-amber); }
+    .btn-circle.listen:hover svg { stroke:var(--accent-amber); }
+    .btn-circle.listen.active { border-color:var(--accent-amber);background:rgba(245,158,11,.1);box-shadow:var(--glow-amber); }
+    .btn-circle.listen.active svg { stroke:var(--accent-amber); }
+    .btn-circle.listen.active::after { border-color:rgba(245,158,11,.2);animation:ringPulse 2s ease-in-out infinite; }
+
+    @keyframes ringPulse { 0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.15);opacity:0} }
+
+    .control-label { font-size:13px;font-weight:500;color:var(--text-secondary);text-align:center;margin-top:12px; }
+    .control-label span { display:block;font-size:11px;color:var(--text-muted);margin-top:2px; }
+
+    /* Buffer indicator */
+    .buffer-indicator {
+      display:flex;align-items:center;gap:8px;padding:8px 16px;border-radius:100px;
+      background:rgba(245,158,11,.06);border:1px solid rgba(245,158,11,.15);
+      font-size:12px;color:var(--text-muted);margin-top:8px;
+    }
+    .buffer-indicator.ok { border-color:rgba(34,197,94,.2);background:rgba(34,197,94,.06); }
+    .buffer-indicator__bar { width:60px;height:4px;background:rgba(255,255,255,.06);border-radius:100px;overflow:hidden; }
+    .buffer-indicator__fill { height:100%;border-radius:100px;background:var(--accent-amber);transition:width .3s; }
+    .buffer-indicator.ok .buffer-indicator__fill { background:var(--accent-green); }
+
+    /* Phone banner */
+    .phone-banner {
+      background:linear-gradient(135deg,rgba(245,158,11,.08),rgba(124,58,237,.08));
+      border:1px solid rgba(245,158,11,.2);border-radius:var(--radius);
+      padding:16px 24px;margin-bottom:24px;display:flex;align-items:center;gap:16px;
+    }
+    .phone-banner__icon { font-size:28px;flex-shrink:0; }
+    .phone-banner__text { font-size:13px;color:var(--text-secondary);line-height:1.5; }
+    .phone-banner__text strong { color:var(--accent-amber); }
+    .phone-banner__url {
+      font-family:'Inter',monospace;background:rgba(255,255,255,.06);padding:4px 10px;border-radius:6px;
+      font-size:14px;color:var(--text-primary);font-weight:600;user-select:all;
+    }
+
+    /* Stats */
+    .stats-row { display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:24px; }
+    .stat-card { text-align:center;padding:24px 16px; }
+    .stat-card__value { font-size:32px;font-weight:700;letter-spacing:-1px;line-height:1;margin-bottom:6px;font-variant-numeric:tabular-nums; }
+    .stat-card__value.cyan { color:var(--accent-cyan); }
+    .stat-card__value.green { color:var(--accent-green); }
+    .stat-card__value.purple { color:var(--accent-purple); }
+    .stat-card__value.amber { color:var(--accent-amber); }
+    .stat-card__label { font-size:11px;font-weight:500;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px; }
+
+    /* Meters */
+    .meters { display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:24px; }
+    .meter__bar-track { width:100%;height:8px;background:rgba(255,255,255,.04);border-radius:100px;overflow:hidden;margin-top:12px; }
+    .meter__bar-fill { height:100%;border-radius:100px;transition:width .15s linear;width:0%; }
+    .meter__bar-fill.input { background:linear-gradient(90deg,var(--accent-cyan),var(--accent-purple));box-shadow:0 0 12px rgba(0,212,255,.4); }
+    .meter__bar-fill.output { background:linear-gradient(90deg,var(--accent-green),var(--accent-cyan));box-shadow:0 0 12px rgba(34,197,94,.4); }
+    .meter__labels { display:flex;justify-content:space-between;margin-top:8px; }
+    .meter__db { font-size:22px;font-weight:700;font-variant-numeric:tabular-nums; }
+    .meter__db.cyan { color:var(--accent-cyan); }
+    .meter__db.green { color:var(--accent-green); }
+    .meter__peak { font-size:11px;color:var(--text-muted);font-weight:500; }
+
+    /* Waveforms */
+    .waveform-grid { display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:24px; }
+    .waveform-card canvas { width:100%;height:140px;border-radius:var(--radius-sm); }
+
+    /* Noise Reduction Ring */
+    .nr-section { margin-bottom:24px; }
+    .nr-container { display:flex;align-items:center;justify-content:center;gap:48px;padding:16px 0; }
+    .nr-circle { position:relative;width:180px;height:180px; }
+    .nr-circle svg { width:100%;height:100%;transform:rotate(-90deg); }
+    .nr-circle__bg { fill:none;stroke:rgba(255,255,255,.04);stroke-width:8; }
+    .nr-circle__fill { fill:none;stroke:url(#nrGradient);stroke-width:8;stroke-linecap:round;stroke-dasharray:502;stroke-dashoffset:502;transition:stroke-dashoffset .3s linear;filter:drop-shadow(0 0 8px rgba(0,212,255,.4)); }
+    .nr-circle__text { position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center; }
+    .nr-circle__value { font-size:42px;font-weight:800;letter-spacing:-2px;background:linear-gradient(135deg,var(--accent-cyan),var(--accent-green));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;font-variant-numeric:tabular-nums; }
+    .nr-circle__unit { font-size:13px;color:var(--text-muted);font-weight:500;margin-top:-2px; }
+    .nr-info { display:flex;flex-direction:column;gap:16px; }
+    .nr-info__item { display:flex;align-items:center;gap:12px; }
+    .nr-info__dot { width:10px;height:10px;border-radius:50%;flex-shrink:0; }
+    .nr-info__dot.input { background:var(--accent-cyan);box-shadow:0 0 8px rgba(0,212,255,.5); }
+    .nr-info__dot.output { background:var(--accent-green);box-shadow:0 0 8px rgba(34,197,94,.5); }
+    .nr-info__dot.reduced { background:var(--accent-purple);box-shadow:0 0 8px rgba(124,58,237,.5); }
+    .nr-info__label { font-size:13px;color:var(--text-secondary); }
+    .nr-info__value { font-size:14px;font-weight:600;color:var(--text-primary);margin-left:auto;font-variant-numeric:tabular-nums; }
+
+    .idle-overlay {
+      position:absolute;inset:0;background:rgba(6,6,15,.6);border-radius:var(--radius);
+      display:flex;align-items:center;justify-content:center;z-index:2;backdrop-filter:blur(4px);
+      opacity:1;transition:opacity .4s;pointer-events:none;
+    }
+    .idle-overlay.hidden { opacity:0; }
+    .idle-overlay span { font-size:13px;color:var(--text-muted);font-weight:500;letter-spacing:.5px; }
+
+    .footer { text-align:center;padding:32px 0;color:var(--text-muted);font-size:12px; }
+    .footer a { color:var(--accent-cyan);text-decoration:none; }
+
+    @media(max-width:768px) {
+      .waveform-grid,.meters { grid-template-columns:1fr; }
+      .stats-row { grid-template-columns:repeat(2,1fr); }
+      .nr-container { flex-direction:column;gap:24px; }
+      .header__title { font-size:28px; }
+      .controls { gap:24px; }
+      .phone-banner { flex-direction:column;text-align:center; }
+    }
+  </style>
+</head>
+<body>
+  <div class="bg-effects">
+    <div class="bg-orb bg-orb--cyan"></div>
+    <div class="bg-orb bg-orb--purple"></div>
+    <div class="bg-orb bg-orb--green"></div>
+  </div>
+
+  <div class="app">
+    <header class="header">
+      <div class="header__badge" id="statusBadge">
+        <div class="dot"></div>
+        <span id="statusText">INACTIVE</span>
+      </div>
+      <h1 class="header__title">DeepFilter ANC</h1>
+      <p class="header__subtitle">Real-Time Neural Noise Cancellation · Powered by DeepFilterNet3</p>
+    </header>
+
+    <div class="phone-banner">
+      <div class="phone-banner__icon">📱</div>
+      <div class="phone-banner__text">
+        <strong>Listen on your phone:</strong> Connect to the same WiFi, open
+        <span class="phone-banner__url" id="phoneUrl">http://192.168.0.6:5000</span>
+        and tap the 🎧 Listen button to hear the enhanced audio.
+      </div>
+    </div>
+
+    <!-- Controls -->
+    <div class="controls">
+      <div class="control-group">
+        <button class="btn-circle power" id="powerBtn" onclick="toggleAudio()">
+          <svg viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M18.36 6.64a9 9 0 1 1-12.73 0" /><line x1="12" y1="2" x2="12" y2="12" />
+          </svg>
+        </button>
+        <div class="control-label"><span id="powerLabel">Click to start</span></div>
+      </div>
+      <div class="control-group">
+        <button class="btn-circle listen" id="listenBtn" onclick="toggleListen()">
+          <svg viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 18v-6a9 9 0 0 1 18 0v6" />
+            <path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z" />
+          </svg>
+        </button>
+        <div class="control-label"><span id="listenLabel">🎧 Listen</span></div>
+        <div class="buffer-indicator" id="bufferIndicator" style="display:none">
+          <div class="buffer-indicator__bar"><div class="buffer-indicator__fill" id="bufferFill" style="width:0%"></div></div>
+          <span id="bufferText">Buffering…</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Stats -->
+    <div class="stats-row">
+      <div class="card stat-card">
+        <div class="stat-card__value cyan" id="srValue">48000</div>
+        <div class="stat-card__label">Sample Rate</div>
+      </div>
+      <div class="card stat-card">
+        <div class="stat-card__value green" id="nrValue">0%</div>
+        <div class="stat-card__label">Noise Reduction</div>
+      </div>
+      <div class="card stat-card">
+        <div class="stat-card__value purple" id="latencyValue">500ms</div>
+        <div class="stat-card__label">Process Block</div>
+      </div>
+      <div class="card stat-card">
+        <div class="stat-card__value amber" id="bufferValue">0.0s</div>
+        <div class="stat-card__label">Audio Buffer</div>
+      </div>
+    </div>
+
+    <!-- Level Meters -->
+    <div class="meters">
+      <div class="card">
+        <div class="card__header"><div class="card__title">🎙️ Input Level</div></div>
+        <div class="card__body">
+          <div class="meter__db cyan" id="inputDb">-∞ dB</div>
+          <div class="meter__bar-track"><div class="meter__bar-fill input" id="inputBar"></div></div>
+          <div class="meter__labels"><span class="meter__peak">-60 dB</span><span class="meter__peak">0 dB</span></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card__header"><div class="card__title">🔊 Output Level</div></div>
+        <div class="card__body">
+          <div class="meter__db green" id="outputDb">-∞ dB</div>
+          <div class="meter__bar-track"><div class="meter__bar-fill output" id="outputBar"></div></div>
+          <div class="meter__labels"><span class="meter__peak">-60 dB</span><span class="meter__peak">0 dB</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Waveforms -->
+    <div class="waveform-grid">
+      <div class="card waveform-card" style="position:relative">
+        <div class="card__header"><div class="card__title">Input Waveform</div></div>
+        <div class="card__body"><canvas id="inputCanvas"></canvas></div>
+        <div class="idle-overlay" id="inputOverlay"><span>Waiting for audio…</span></div>
+      </div>
+      <div class="card waveform-card" style="position:relative">
+        <div class="card__header"><div class="card__title">Output Waveform (Enhanced)</div></div>
+        <div class="card__body"><canvas id="outputCanvas"></canvas></div>
+        <div class="idle-overlay" id="outputOverlay"><span>Waiting for audio…</span></div>
+      </div>
+    </div>
+
+    <!-- Noise Reduction Ring -->
+    <div class="card nr-section">
+      <div class="card__header"><div class="card__title">Noise Reduction Analysis</div></div>
+      <div class="card__body">
+        <div class="nr-container">
+          <div class="nr-circle">
+            <svg viewBox="0 0 180 180">
+              <defs>
+                <linearGradient id="nrGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#00d4ff" /><stop offset="100%" stop-color="#22c55e" />
+                </linearGradient>
+              </defs>
+              <circle class="nr-circle__bg" cx="90" cy="90" r="80" />
+              <circle class="nr-circle__fill" id="nrRing" cx="90" cy="90" r="80" />
+            </svg>
+            <div class="nr-circle__text">
+              <div class="nr-circle__value" id="nrRingValue">0</div>
+              <div class="nr-circle__unit">% reduced</div>
+            </div>
+          </div>
+          <div class="nr-info">
+            <div class="nr-info__item">
+              <div class="nr-info__dot input"></div>
+              <span class="nr-info__label">Input RMS</span>
+              <span class="nr-info__value" id="infoInputRms">0.000</span>
+            </div>
+            <div class="nr-info__item">
+              <div class="nr-info__dot output"></div>
+              <span class="nr-info__label">Output RMS</span>
+              <span class="nr-info__value" id="infoOutputRms">0.000</span>
+            </div>
+            <div class="nr-info__item">
+              <div class="nr-info__dot reduced"></div>
+              <span class="nr-info__label">Noise Removed</span>
+              <span class="nr-info__value" id="infoNoiseRemoved">0.0%</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <footer class="footer">
+      DeepFilter ANC &mdash; Built with <a href="https://github.com/Rikorose/DeepFilterNet" target="_blank">DeepFilterNet3</a>, PyTorch &amp; Flask
+    </footer>
+  </div>
+
+  <script>
+    // ─────────────────────────────────────────────
+    //  Ring Buffer for gapless audio playback
+    // ─────────────────────────────────────────────
+    class AudioRingBuffer {
+      constructor(capacity) {
+        this.buffer = new Float32Array(capacity);
+        this.capacity = capacity;
+        this.writePos = 0;
+        this.readPos = 0;
+        this.available = 0;
+      }
+
+      write(data) {
+        for (let i = 0; i < data.length; i++) {
+          this.buffer[this.writePos] = data[i];
+          this.writePos = (this.writePos + 1) % this.capacity;
+        }
+        this.available = Math.min(this.capacity, this.available + data.length);
+      }
+
+      read(output) {
+        const len = output.length;
+        if (this.available < len) {
+          // Underrun — output silence
+          output.fill(0);
+          return false;
+        }
+        for (let i = 0; i < len; i++) {
+          output[i] = this.buffer[this.readPos];
+          this.readPos = (this.readPos + 1) % this.capacity;
+        }
+        this.available -= len;
+        return true;
+      }
+
+      bufferedSeconds(sampleRate) {
+        return this.available / sampleRate;
+      }
+
+      clear() {
+        this.writePos = 0;
+        this.readPos = 0;
+        this.available = 0;
+      }
+    }
+
+    // ─────────────────────────────────────────────
+    //  Socket.IO
+    // ─────────────────────────────────────────────
+    const socket = io();
+    let isActive = false;
+    let sampleRate = 48000;
+
+    // ─────────────────────────────────────────────
+    //  Audio Playback
+    // ─────────────────────────────────────────────
+    let audioCtx = null;
+    let scriptNode = null;
+    let ringBuffer = null;
+    let isListening = false;
+    let isPreBuffering = true;
+    const PRE_BUFFER_SECONDS = 3.5; // buffer 3.5 seconds before starting playback
+    const RING_CAPACITY = 48000 * 30; // 30 seconds ring buffer
+
+    function toggleListen() {
+      const btn = document.getElementById('listenBtn');
+      const label = document.getElementById('listenLabel');
+      const indicator = document.getElementById('bufferIndicator');
+
+      if (!isListening) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: sampleRate });
+        ringBuffer = new AudioRingBuffer(RING_CAPACITY);
+        isPreBuffering = true;
+
+        // ScriptProcessorNode for continuous, gapless playback
+        // 4096 samples per process call = ~85ms at 48kHz
+        scriptNode = audioCtx.createScriptProcessor(4096, 0, 1);
+        scriptNode.onaudioprocess = function(e) {
+          const output = e.outputBuffer.getChannelData(0);
+          if (isPreBuffering) {
+            output.fill(0);
+            return;
+          }
+          const ok = ringBuffer.read(output);
+          if (!ok) {
+            // Buffer underrun — go back to pre-buffering
+            isPreBuffering = true;
+            updateBufferUI();
+          }
+        };
+        scriptNode.connect(audioCtx.destination);
+
+        isListening = true;
+        btn.classList.add('active');
+        label.textContent = '🎧 Listening…';
+        indicator.style.display = 'flex';
+        updateBufferUI();
+      } else {
+        isListening = false;
+        isPreBuffering = true;
+        btn.classList.remove('active');
+        label.textContent = '🎧 Listen';
+        indicator.style.display = 'none';
+
+        if (scriptNode) { scriptNode.disconnect(); scriptNode = null; }
+        if (audioCtx) { audioCtx.close(); audioCtx = null; }
+        if (ringBuffer) { ringBuffer.clear(); ringBuffer = null; }
+      }
+    }
+
+    function feedAudio(b64Data) {
+      if (!isListening || !ringBuffer) return;
+
+      // Decode base64 → Float32Array
+      const binaryStr = atob(b64Data);
+      const bytes = new Uint8Array(binaryStr.length);
+      for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+      const float32 = new Float32Array(bytes.buffer);
+
+      ringBuffer.write(float32);
+
+      // Check pre-buffer threshold
+      if (isPreBuffering && ringBuffer.bufferedSeconds(sampleRate) >= PRE_BUFFER_SECONDS) {
+        isPreBuffering = false;
+      }
+
+      updateBufferUI();
+    }
+
+    function updateBufferUI() {
+      if (!ringBuffer) return;
+      const secs = ringBuffer.bufferedSeconds(sampleRate);
+      const pct = Math.min(100, (secs / PRE_BUFFER_SECONDS) * 100);
+      const fill = document.getElementById('bufferFill');
+      const text = document.getElementById('bufferText');
+      const indicator = document.getElementById('bufferIndicator');
+      const bufferStat = document.getElementById('bufferValue');
+
+      fill.style.width = pct + '%';
+      bufferStat.textContent = secs.toFixed(1) + 's';
+
+      if (isPreBuffering) {
+        text.textContent = 'Buffering… ' + Math.round(pct) + '%';
+        indicator.classList.remove('ok');
+      } else {
+        text.textContent = 'Playing (' + secs.toFixed(1) + 's buffered)';
+        indicator.classList.add('ok');
+      }
+    }
+
+    // ─────────────────────────────────────────────
+    //  DOM Elements
+    // ─────────────────────────────────────────────
+    const powerBtn      = document.getElementById('powerBtn');
+    const powerLabel    = document.getElementById('powerLabel');
+    const statusBadge   = document.getElementById('statusBadge');
+    const statusText    = document.getElementById('statusText');
+    const inputBar      = document.getElementById('inputBar');
+    const outputBar     = document.getElementById('outputBar');
+    const inputDb       = document.getElementById('inputDb');
+    const outputDb      = document.getElementById('outputDb');
+    const nrValue       = document.getElementById('nrValue');
+    const nrRingValue   = document.getElementById('nrRingValue');
+    const nrRing        = document.getElementById('nrRing');
+    const srValue       = document.getElementById('srValue');
+    const latencyValue  = document.getElementById('latencyValue');
+    const inputOverlay  = document.getElementById('inputOverlay');
+    const outputOverlay = document.getElementById('outputOverlay');
+    const inputCanvas   = document.getElementById('inputCanvas');
+    const outputCanvas  = document.getElementById('outputCanvas');
+    const inputCtx      = inputCanvas.getContext('2d');
+    const outputCtx     = outputCanvas.getContext('2d');
+
+    // Canvas resize
+    function resizeCanvas(c) { const r=c.getBoundingClientRect();c.width=r.width*devicePixelRatio;c.height=r.height*devicePixelRatio; }
+    function resizeAll() { resizeCanvas(inputCanvas); resizeCanvas(outputCanvas); }
+    window.addEventListener('resize', resizeAll); resizeAll();
+
+    // Phone URL
+    document.getElementById('phoneUrl').textContent = 'http://' + location.hostname + ':5000';
+
+    // ─────────────────────────────────────────────
+    //  Controls
+    // ─────────────────────────────────────────────
+    function toggleAudio() {
+      socket.emit(isActive ? 'stop_audio' : 'start_audio');
+    }
+
+    socket.on('status', (data) => {
+      isActive = data.active;
+      powerBtn.classList.toggle('active', isActive);
+      statusBadge.classList.toggle('active', isActive);
+      statusText.textContent = isActive ? 'ACTIVE' : 'INACTIVE';
+      powerLabel.textContent = isActive ? 'Click to stop' : 'Click to start';
+      if (data.sr) {
+        sampleRate = data.sr;
+        srValue.textContent = data.sr;
+      }
+      if (data.process_ms) {
+        latencyValue.textContent = data.process_ms + 'ms';
+      }
+      if (!isActive) {
+        inputOverlay.classList.remove('hidden');
+        outputOverlay.classList.remove('hidden');
+      }
+    });
+
+    // ─────────────────────────────────────────────
+    //  Waveform Drawing
+    // ─────────────────────────────────────────────
+    function drawWaveform(ctx, canvas, data, c1, c2) {
+      const w=canvas.width,h=canvas.height,dpr=devicePixelRatio;
+      ctx.clearRect(0,0,w,h);
+      const grad=ctx.createLinearGradient(0,0,w,0);grad.addColorStop(0,c1);grad.addColorStop(1,c2);
+      const mid=h/2,len=data.length;if(!len)return;
+      ctx.beginPath();ctx.moveTo(0,mid);
+      for(let i=0;i<len;i++){ctx.lineTo((i/(len-1))*w,mid+data[i]*mid*.9);}
+      ctx.lineTo(w,mid);
+      for(let i=len-1;i>=0;i--){ctx.lineTo((i/(len-1))*w,mid-data[i]*mid*.9);}
+      ctx.closePath();ctx.globalAlpha=.15;ctx.fillStyle=grad;ctx.fill();ctx.globalAlpha=1;
+      ctx.beginPath();ctx.moveTo(0,mid);
+      for(let i=0;i<len;i++){ctx.lineTo((i/(len-1))*w,mid+data[i]*mid*.9);}
+      ctx.strokeStyle=grad;ctx.lineWidth=2*dpr;ctx.stroke();
+      ctx.beginPath();ctx.moveTo(0,mid);ctx.lineTo(w,mid);ctx.strokeStyle='rgba(255,255,255,.05)';ctx.lineWidth=1;ctx.stroke();
+    }
+
+    function toDb(l){if(l<.0001)return-60;return Math.max(-60,Math.round(20*Math.log10(l)));}
+
+    const circumference = 2 * Math.PI * 80;
+
+    // ─────────────────────────────────────────────
+    //  Metrics Handler
+    // ─────────────────────────────────────────────
+    socket.on('audio_metrics', (data) => {
+      if (!isActive) return;
+      inputOverlay.classList.add('hidden');
+      outputOverlay.classList.add('hidden');
+
+      // Level meters
+      inputBar.style.width = Math.min(100, data.input_level * 100) + '%';
+      outputBar.style.width = Math.min(100, data.output_level * 100) + '%';
+      const idb = toDb(data.input_level / 10), odb = toDb(data.output_level / 10);
+      inputDb.textContent = (idb <= -60 ? '-∞' : idb) + ' dB';
+      outputDb.textContent = (odb <= -60 ? '-∞' : odb) + ' dB';
+
+      // Noise reduction
+      const nr = data.noise_reduction || 0;
+      nrValue.textContent = nr.toFixed(0) + '%';
+      nrRingValue.textContent = nr.toFixed(0);
+      nrRing.style.strokeDashoffset = circumference - (nr / 100) * circumference;
+
+      // Info
+      document.getElementById('infoInputRms').textContent = (data.input_level / 10).toFixed(4);
+      document.getElementById('infoOutputRms').textContent = (data.output_level / 10).toFixed(4);
+      document.getElementById('infoNoiseRemoved').textContent = nr.toFixed(1) + '%';
+
+      // Waveforms
+      drawWaveform(inputCtx, inputCanvas, data.input_waveform || [], '#00d4ff', '#7c3aed');
+      drawWaveform(outputCtx, outputCanvas, data.output_waveform || [], '#22c55e', '#00d4ff');
+
+      // Feed audio to ring buffer for playback
+      if (data.audio_b64) {
+        feedAudio(data.audio_b64);
+      }
+    });
+
+    socket.on('error', (data) => { alert('Error: ' + data.message); });
+  </script>
+</body>
+</html>
