@@ -107,6 +107,19 @@ def processing_loop():
 def index():
     return send_from_directory(".", "index.html")
 
+def find_input_device():
+    try:
+        devices = sd.query_devices()
+        for i, dev in enumerate(devices):
+            if dev['max_input_channels'] > 0:
+                name = dev['name'].lower()
+                if ('usb' in name or 'headset' in name) and 'ape' not in name:
+                    print(f"Auto-selected USB mic: Device [{i}] {dev['name']}")
+                    return i
+    except Exception as e:
+        print(f"Device query notice: {e}")
+    return None
+
 @socketio.on("start_audio")
 def handle_start():
     global stream, audio_active, process_thread
@@ -119,9 +132,10 @@ def handle_start():
             process_thread.start()
 
             # Start mic capture (Mono)
+            input_dev = find_input_device()
             stream = sd.InputStream(
                 samplerate=SR, blocksize=CAPTURE_BLOCK, channels=CHANNELS,
-                callback=capture_callback
+                device=input_dev, callback=capture_callback
             )
             stream.start()
 
