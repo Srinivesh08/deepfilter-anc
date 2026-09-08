@@ -105,6 +105,12 @@
     .btn-circle.listen.active svg { stroke:var(--accent-amber); }
     .btn-circle.listen.active::after { border-color:rgba(245,158,11,.2);animation:ringPulse 2s ease-in-out infinite; }
 
+    .btn-circle.bypass:hover { border-color:#ef4444;box-shadow:0 0 20px rgba(239,68,68,.25); }
+    .btn-circle.bypass:hover svg { stroke:#ef4444; }
+    .btn-circle.bypass.active { border-color:#ef4444;background:rgba(239,68,68,.15);box-shadow:0 0 25px rgba(239,68,68,.3); }
+    .btn-circle.bypass.active svg { stroke:#ef4444; }
+    .btn-circle.bypass.active::after { border-color:rgba(239,68,68,.2);animation:ringPulse 2s ease-in-out infinite; }
+
     @keyframes ringPulse { 0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.15);opacity:0} }
 
     .control-label { font-size:13px;font-weight:500;color:var(--text-secondary);text-align:center;margin-top:12px; }
@@ -244,6 +250,14 @@
           </svg>
         </button>
         <div class="control-label"><span id="powerLabel">Click to start</span></div>
+      </div>
+      <div class="control-group">
+        <button class="btn-circle bypass" id="bypassBtn" onclick="toggleBypass()">
+          <svg viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+          </svg>
+        </button>
+        <div class="control-label"><span id="bypassLabel">🛡️ ANC ON</span></div>
       </div>
       <div class="control-group">
         <button class="btn-circle listen" id="listenBtn" onclick="toggleListen()">
@@ -549,6 +563,10 @@
       socket.emit(isActive ? 'stop_audio' : 'start_audio');
     }
 
+    function toggleBypass() {
+      socket.emit('toggle_bypass');
+    }
+
     socket.on('status', (data) => {
       isActive = data.active;
       powerBtn.classList.toggle('active', isActive);
@@ -561,6 +579,13 @@
       }
       if (data.process_ms) {
         latencyValue.textContent = data.process_ms + 'ms';
+      }
+      if (data.bypass !== undefined) {
+        const bypassBtn = document.getElementById('bypassBtn');
+        const bypassLabel = document.getElementById('bypassLabel');
+        bypassBtn.classList.toggle('active', data.bypass);
+        bypassLabel.textContent = data.bypass ? '⚠️ ANC OFF' : '🛡️ ANC ON';
+        bypassLabel.style.color = data.bypass ? '#ef4444' : '';
       }
 
       if (!isActive) {

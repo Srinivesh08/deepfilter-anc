@@ -25,6 +25,7 @@ MAX_GAIN = 10.0           # Max gain multiplier to prevent amplifying silence/no
 
 # State
 audio_active = False
+bypass_mode = False  # True = raw mic passthrough (no AI), False = DeepFilterNet active
 stream = None
 audio_queue = queue.Queue()
 process_thread = None
@@ -50,31 +51,35 @@ def processing_loop():
 
                 # Extract mono channel
                 primary_chunk = to_process[:, 0]
+                input_rms = float(np.sqrt(np.mean(primary_chunk ** 2)))
 
-                # DeepFilterNet enhancement
-                audio_tensor = torch.from_numpy(primary_chunk).float().unsqueeze(0)
-                enhanced = enhance(model, df_state, audio_tensor)
-                enhanced_np = enhanced.squeeze(0).cpu().numpy()
+                if bypass_mode:
+                    # Bypass — raw mic audio, no AI processing
+                    output_np = primary_chunk.copy()
+                    nr = 0.0
+                else:
+                    # DeepFilterNet enhancement
+                    audio_tensor = torch.from_numpy(primary_chunk).float().unsqueeze(0)
+                    enhanced = enhance(model, df_state, audio_tensor)
+                    output_np = enhanced.squeeze(0).cpu().numpy()
 
                 # Metrics (computed before normalization for accurate NR%)
-                input_rms = float(np.sqrt(np.mean(primary_chunk ** 2)))
-                output_rms = float(np.sqrt(np.mean(enhanced_np ** 2)))
-                nr = 0.0
-                if input_rms > 0.001:
+                output_rms = float(np.sqrt(np.mean(output_np ** 2)))
+                if not bypass_mode and input_rms > 0.001:
                     nr = max(0.0, min(100.0, (1.0 - output_rms / input_rms) * 100.0))
 
                 # Volume normalization — consistent output loudness
                 if output_rms > 1e-6:
                     gain = min(TARGET_RMS / output_rms, MAX_GAIN)
-                    enhanced_np = enhanced_np * gain
-                    enhanced_np = np.clip(enhanced_np, -1.0, 1.0)
+                    output_np = output_np * gain
+                    output_np = np.clip(output_np, -1.0, 1.0)
 
                 # Downsample waveform for visualization
                 step = max(1, len(primary_chunk) // 128)
 
-                # Encode enhanced audio as base64 float32
+                # Encode audio as base64 float32
                 audio_b64 = base64.b64encode(
-                    enhanced_np.astype(np.float32).tobytes()
+                    output_np.astype(np.float32).tobytes()
                 ).decode("ascii")
 
                 socketio.emit("audio_metrics", {
@@ -82,9 +87,10 @@ def processing_loop():
                     "output_level": min(1.0, output_rms * 10),
                     "noise_reduction": round(nr, 1),
                     "input_waveform": primary_chunk[::step].tolist()[:128],
-                    "output_waveform": enhanced_np[::step].tolist()[:128],
+                    "output_waveform": output_np[::step].tolist()[:128],
                     "audio_b64": audio_b64,
-                    "frames": len(enhanced_np)
+                    "frames": len(output_np),
+                    "bypass": bypass_mode
                 })
 
         except queue.Empty:
@@ -122,7 +128,8 @@ def handle_start():
             socketio.emit("status", {
                 "active": True, "sr": SR,
                 "block_size": PROCESS_SIZE,
-                "process_ms": int(PROCESS_SIZE / SR * 1000)
+                "process_ms": int(PROCESS_SIZE / SR * 1000),
+                "bypass": bypass_mode
             })
             print("Audio stream started (Mono).")
         except Exception as e:
@@ -145,12 +152,25 @@ def handle_stop():
         socketio.emit("status", {"active": False})
         print("Audio stream stopped.")
 
+@socketio.on("toggle_bypass")
+def handle_toggle_bypass():
+    global bypass_mode
+    bypass_mode = not bypass_mode
+    socketio.emit("status", {
+        "active": audio_active, "sr": SR,
+        "block_size": PROCESS_SIZE,
+        "process_ms": int(PROCESS_SIZE / SR * 1000),
+        "bypass": bypass_mode
+    })
+    print(f"Bypass mode: {'ON (raw audio)' if bypass_mode else 'OFF (DeepFilterNet active)'}")
+
 @socketio.on("connect")
 def handle_connect():
     socketio.emit("status", {
         "active": audio_active, "sr": SR,
         "block_size": PROCESS_SIZE,
-        "process_ms": int(PROCESS_SIZE / SR * 1000)
+        "process_ms": int(PROCESS_SIZE / SR * 1000),
+        "bypass": bypass_mode
     })
     print("Client connected.")
 
