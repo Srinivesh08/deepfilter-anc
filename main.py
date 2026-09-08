@@ -18,6 +18,11 @@ def callback(indata, outdata, frames, time_info, status):
         enhanced_np = np.pad(enhanced_np, (0, frames - len(enhanced_np)))
     else:
         enhanced_np = enhanced_np[:frames]
+    # Volume normalization — consistent output loudness
+    rms = np.sqrt(np.mean(enhanced_np ** 2))
+    if rms > 1e-6:
+        gain = min(0.08 / rms, 10.0)
+        enhanced_np = np.clip(enhanced_np * gain, -1.0, 1.0)
     outdata[:, 0] = enhanced_np
 
 print(f"Starting real-time enhancement at {SR} Hz. Press Ctrl+C to stop.")

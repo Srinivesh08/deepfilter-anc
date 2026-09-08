@@ -314,26 +314,6 @@
       </div>
     </div>
 
-    <!-- NLMS Post-Processing -->
-    <div class="card" style="margin-bottom:24px;">
-      <div class="card__header"><div class="card__title">NLMS Residual Noise Filter</div></div>
-      <div class="card__body">
-        <div style="display:flex; align-items:center; gap:24px; justify-content:space-between; flex-wrap:wrap;">
-          <div style="display:flex; align-items:center; gap:12px;">
-            <label class="switch">
-              <input type="checkbox" id="nlmsToggle" onchange="updateNLMS()">
-              <span class="slider"></span>
-            </label>
-            <span style="font-size:14px; font-weight:600; color:var(--text-secondary);" id="nlmsLabel">OFF</span>
-          </div>
-          <div style="flex-grow:1; display:flex; align-items:center; gap:16px; max-width:400px; opacity:0.5; transition:opacity 0.3s;" id="nlmsParams">
-            <span style="font-size:13px; color:var(--text-secondary); flex-shrink:0;">Learning Rate (μ): <strong id="muValue" style="color:var(--text-primary);">0.05</strong></span>
-            <input type="range" id="muSlider" min="0.001" max="0.2" step="0.001" value="0.05" onchange="updateNLMS()" oninput="document.getElementById('muValue').textContent=this.value" style="flex-grow:1;" disabled>
-          </div>
-        </div>
-      </div>
-    </div>
-
     <!-- Noise Reduction Ring -->
     <div class="card nr-section">
       <div class="card__header"><div class="card__title">Noise Reduction Analysis</div></div>
@@ -569,12 +549,6 @@
       socket.emit(isActive ? 'stop_audio' : 'start_audio');
     }
 
-    function updateNLMS() {
-      const enabled = document.getElementById('nlmsToggle').checked;
-      const mu = document.getElementById('muSlider').value;
-      socket.emit('set_nlms', { enabled: enabled, mu: mu });
-    }
-
     socket.on('status', (data) => {
       isActive = data.active;
       powerBtn.classList.toggle('active', isActive);
@@ -588,17 +562,7 @@
       if (data.process_ms) {
         latencyValue.textContent = data.process_ms + 'ms';
       }
-      if (data.nlms !== undefined) {
-        document.getElementById('nlmsToggle').checked = data.nlms;
-        document.getElementById('nlmsLabel').textContent = data.nlms ? 'ACTIVE' : 'OFF';
-        document.getElementById('nlmsLabel').style.color = data.nlms ? 'var(--accent-green)' : 'var(--text-secondary)';
-        document.getElementById('nlmsParams').style.opacity = data.nlms ? '1' : '0.5';
-        document.getElementById('muSlider').disabled = !data.nlms;
-      }
-      if (data.mu !== undefined) {
-        document.getElementById('muSlider').value = data.mu;
-        document.getElementById('muValue').textContent = data.mu;
-      }
+
       if (!isActive) {
         inputOverlay.classList.remove('hidden');
         outputOverlay.classList.remove('hidden');
